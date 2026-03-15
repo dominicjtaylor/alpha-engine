@@ -33,7 +33,7 @@ All performance is reported in **GBP (£)**.
 
 st.divider()
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown("""
@@ -53,6 +53,16 @@ with col2:
     preview the rebalance, and track your paper P&L over time.
 
     → Use the **Paper Trading** page in the sidebar
+    """)
+
+with col3:
+    st.markdown("""
+    ### 🔬 Factor Research
+    Evaluate signals as alpha factors. Measure IC (information
+    coefficient), factor decay curves, and quantile portfolio
+    return spreads to verify a signal has genuine predictive power.
+
+    → Use the **Factor Research** page in the sidebar
     """)
 
 st.divider()

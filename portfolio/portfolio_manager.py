@@ -44,6 +44,139 @@ class CombinationMethod(Enum):
     """Weight strategies by their rolling Sharpe ratio (requires pre-backtest)."""
 
 
+# ---------------------------------------------------------------------------
+# Cross-sectional ranking and portfolio construction utilities
+# ---------------------------------------------------------------------------
+
+def rank_cross_section(
+    signals: pd.DataFrame,
+    ascending: bool = True,
+    pct: bool = True,
+) -> pd.DataFrame:
+    """
+    Compute cross-sectional percentile ranks for each row (date).
+
+    Parameters
+    ----------
+    signals : pd.DataFrame
+        Raw alpha signals — wide format (DatetimeIndex × ticker).
+    ascending : bool
+        If True, smallest value gets rank 0.0; largest gets 1.0.
+    pct : bool
+        If True, returns percentile ranks in [0, 1].
+
+    Returns
+    -------
+    pd.DataFrame
+        Cross-sectional ranks with same shape as input.
+    """
+    return signals.rank(axis=1, pct=pct, ascending=ascending, na_option="keep")
+
+
+def select_top_n(
+    signals: pd.DataFrame,
+    n: int,
+    long: bool = True,
+) -> pd.DataFrame:
+    """
+    Select the top-N (or bottom-N) tickers by signal each day.
+
+    Parameters
+    ----------
+    signals : pd.DataFrame
+        Raw alpha signals — wide format.
+    n : int
+        Number of positions to select per day.
+    long : bool
+        If True, select the N highest signals (long).
+        If False, select the N lowest signals (short).
+
+    Returns
+    -------
+    pd.DataFrame
+        Boolean mask DataFrame — True = selected position.
+    """
+    if long:
+        ranks = signals.rank(axis=1, ascending=False, na_option="keep")
+    else:
+        ranks = signals.rank(axis=1, ascending=True, na_option="keep")
+    return ranks <= n
+
+
+def select_top_pct(
+    signals: pd.DataFrame,
+    pct: float,
+    long: bool = True,
+) -> pd.DataFrame:
+    """
+    Select the top (or bottom) percentile of tickers by signal each day.
+
+    Parameters
+    ----------
+    signals : pd.DataFrame
+        Raw alpha signals — wide format.
+    pct : float
+        Fraction to select, e.g. 0.10 = top 10%.
+    long : bool
+        If True, select top ``pct`` (long). If False, select bottom ``pct`` (short).
+
+    Returns
+    -------
+    pd.DataFrame
+        Boolean mask DataFrame.
+    """
+    if long:
+        thresholds = signals.quantile(1.0 - pct, axis=1)
+        mask = signals.ge(thresholds, axis=0)
+    else:
+        thresholds = signals.quantile(pct, axis=1)
+        mask = signals.le(thresholds, axis=0)
+    # Exclude NaN signals
+    return mask & signals.notna()
+
+
+def signal_proportional_weights(
+    signals: pd.DataFrame,
+    long_only: bool = False,
+    normalise_gross: bool = True,
+) -> pd.DataFrame:
+    """
+    Construct weights proportional to signal magnitude (z-scored cross-sectionally).
+
+    Long weights ∝ positive z-scores, short weights ∝ negative z-scores.
+    The resulting portfolio is dollar-neutral (long book = short book).
+
+    Parameters
+    ----------
+    signals : pd.DataFrame
+        Raw alpha signals — wide format.
+    long_only : bool
+        If True, only positive signals receive weights.
+    normalise_gross : bool
+        If True, scale each row so gross exposure = 1.0.
+
+    Returns
+    -------
+    pd.DataFrame
+        Portfolio weights in same shape as signals.
+    """
+    # Z-score signals cross-sectionally
+    mu = signals.mean(axis=1)
+    sigma = signals.std(axis=1).replace(0, np.nan)
+    z = signals.sub(mu, axis=0).div(sigma, axis=0)
+
+    if long_only:
+        weights = z.clip(lower=0.0)
+    else:
+        weights = z.copy()
+
+    if normalise_gross:
+        gross = weights.abs().sum(axis=1).replace(0, np.nan)
+        weights = weights.div(gross, axis=0)
+
+    return weights.fillna(0.0)
+
+
 @dataclass
 class PortfolioConfig:
     """
