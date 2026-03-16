@@ -10,12 +10,20 @@ All computations operate on **wide DataFrames** (DatetimeIndex × ticker).
 
 from __future__ import annotations
 
+import logging
 import warnings
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 from scipy import stats
+
+log = logging.getLogger(__name__)
+
+# Minimum cross-sectional standard deviation to consider a date valid.
+# Below this threshold the factor (or return) is effectively constant and
+# spearmanr raises ConstantInputWarning.
+_MIN_CS_STD = 1e-8
 
 
 def compute_ic(
@@ -56,18 +64,32 @@ def compute_ic(
     ic_values: list[float] = []
     dates: list = []
 
+    n_total = len(common_dates)
+    n_skipped_short = 0      # too few assets
+    n_skipped_constant = 0   # constant factor or return cross-section
+
     for date in common_dates:
         f_row = f.loc[date].dropna()
         r_row = r.loc[date].dropna()
         shared = f_row.index.intersection(r_row.index)
+
         if len(shared) < 5:
+            n_skipped_short += 1
             continue
 
         f_vals = f_row[shared].values
         r_vals = r_row[shared].values
 
+        # Skip dates where the factor or returns are constant — spearmanr raises
+        # ConstantInputWarning and returns NaN for these, which pollutes IC stats.
+        if np.std(f_vals) < _MIN_CS_STD or np.std(r_vals) < _MIN_CS_STD:
+            n_skipped_constant += 1
+            continue
+
         if method == "spearman":
-            corr, _ = stats.spearmanr(f_vals, r_vals)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                corr, _ = stats.spearmanr(f_vals, r_vals)
         else:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -77,7 +99,81 @@ def compute_ic(
             ic_values.append(float(corr))
             dates.append(date)
 
+    # Diagnostics
+    n_valid = len(ic_values)
+    log.debug(
+        "IC [%s]: %d/%d dates valid, %d skipped (too few assets), "
+        "%d skipped (constant cross-section)",
+        method, n_valid, n_total, n_skipped_short, n_skipped_constant,
+    )
+    if n_total > 0 and n_skipped_constant / n_total > 0.10:
+        log.warning(
+            "%.1f%% of dates skipped due to constant factor/return values "
+            "(%d/%d dates). Check factor generation for aggregation bugs, "
+            "look-ahead bias, or data quality issues.",
+            100.0 * n_skipped_constant / n_total,
+            n_skipped_constant, n_total,
+        )
+
     return pd.Series(ic_values, index=pd.DatetimeIndex(dates), name="IC")
+
+
+def check_factor_dispersion(
+    factor: pd.DataFrame,
+    min_cs_std: float = _MIN_CS_STD,
+) -> dict:
+    """
+    Audit cross-sectional and time-series variation in a factor DataFrame.
+
+    Called after factor generation to surface constant-signal issues before
+    IC / quantile analysis begins.
+
+    Parameters
+    ----------
+    factor : pd.DataFrame
+        Factor values (index=date, columns=tickers).
+    min_cs_std : float
+        Minimum cross-sectional std to consider a date valid.
+
+    Returns
+    -------
+    dict
+        Keys: n_dates, n_assets_mean, mean_cs_std, pct_constant_dates,
+        n_constant_dates, passed (bool).
+        Logs a WARNING if ``pct_constant_dates > 0.10`` or ``mean_cs_std`` is
+        near zero.
+    """
+    cs_std = factor.std(axis=1)  # std across tickers per date
+    n_constant = int((cs_std < min_cs_std).sum())
+    n_dates = len(cs_std.dropna())
+    mean_cs_std = float(cs_std.mean())
+    pct_constant = n_constant / max(n_dates, 1)
+
+    n_assets_mean = float(factor.notna().sum(axis=1).mean())
+
+    result = {
+        "n_dates": n_dates,
+        "n_assets_mean": n_assets_mean,
+        "mean_cs_std": mean_cs_std,
+        "n_constant_dates": n_constant,
+        "pct_constant_dates": pct_constant,
+        "passed": pct_constant <= 0.10 and mean_cs_std >= min_cs_std,
+    }
+
+    log.debug(
+        "Factor dispersion: %d dates, %.1f assets/date, mean CS std=%.4f, "
+        "%d constant dates (%.1f%%)",
+        n_dates, n_assets_mean, mean_cs_std, n_constant, 100 * pct_constant,
+    )
+    if not result["passed"]:
+        log.warning(
+            "Factor has poor cross-sectional dispersion: mean CS std=%.2e, "
+            "%d/%d dates constant (%.1f%%). "
+            "IC and quantile results will be unreliable.",
+            mean_cs_std, n_constant, n_dates, 100 * pct_constant,
+        )
+
+    return result
 
 
 def compute_rolling_ic(

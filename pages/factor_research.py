@@ -208,10 +208,27 @@ if run_btn:
     # Forward returns at chosen horizon
     fwd_returns = prices.pct_change(ic_horizon).shift(-ic_horizon)
 
-    # ---------- IC Analysis ----------
-    from factor_research.ic import compute_ic, compute_rolling_ic, compute_ic_summary
+    # ---------- Factor dispersion check (runs before IC to catch constant signals) ----------
+    from factor_research.ic import compute_ic, compute_rolling_ic, compute_ic_summary, check_factor_dispersion
     from factor_research.decay import compute_factor_decay
     from factor_research.quantile import compute_quantile_portfolios
+
+    _dispersion = check_factor_dispersion(signals)
+    if not _dispersion["passed"]:
+        st.warning(
+            f"**Low cross-sectional dispersion detected.** "
+            f"Mean CS std = {_dispersion['mean_cs_std']:.2e} — "
+            f"{_dispersion['pct_constant_dates']:.1%} of dates have a constant factor cross-section. "
+            f"IC and quantile results will be unreliable. "
+            f"Check that the lookback period does not exceed the available history, "
+            f"and that factor parameters produce asset-specific values."
+        )
+    else:
+        st.caption(
+            f"Factor dispersion OK — mean CS std = {_dispersion['mean_cs_std']:.4f} "
+            f"across {_dispersion['n_dates']} dates "
+            f"({_dispersion['n_assets_mean']:.0f} assets/date avg)"
+        )
 
     with st.spinner("Computing IC…"):
         ic_summary = compute_ic_summary(signals, fwd_returns, method=ic_method)

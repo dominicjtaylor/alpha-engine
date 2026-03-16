@@ -13,10 +13,15 @@ computed series for easy downstream consumption (charts, metrics, etc.).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger(__name__)
+
+_MIN_CS_STD = 1e-8
 
 
 @dataclass
@@ -84,6 +89,7 @@ def compute_quantile_portfolios(
 
     labels = [f"Q{i}" for i in range(1, n_quantiles + 1)]
     quantile_ret_list: list[pd.Series] = []
+    n_skipped_constant = 0
 
     for date in common_dates:
         f_row = f.loc[date].dropna()
@@ -91,6 +97,13 @@ def compute_quantile_portfolios(
         shared = f_row.index.intersection(r_row.index)
 
         if len(shared) < n_quantiles * 2:
+            quantile_ret_list.append(pd.Series(np.nan, index=labels, name=date))
+            continue
+
+        # Skip dates where the factor is constant — ranking is undefined and
+        # every stock would collapse into the same quantile.
+        if f_row[shared].std() < _MIN_CS_STD:
+            n_skipped_constant += 1
             quantile_ret_list.append(pd.Series(np.nan, index=labels, name=date))
             continue
 
@@ -108,6 +121,17 @@ def compute_quantile_portfolios(
                 q_returns[f"Q{q}"] = float(r_row[shared][tickers_in_q].mean())
 
         quantile_ret_list.append(pd.Series(q_returns, name=date))
+
+    log.debug(
+        "Quantile portfolios: %d/%d dates valid, %d skipped (constant cross-section)",
+        len(common_dates) - n_skipped_constant, len(common_dates), n_skipped_constant,
+    )
+    if len(common_dates) > 0 and n_skipped_constant / len(common_dates) > 0.10:
+        log.warning(
+            "%.1f%% of dates skipped in quantile analysis due to constant factor values. "
+            "Factor may lack cross-sectional dispersion.",
+            100.0 * n_skipped_constant / len(common_dates),
+        )
 
     quantile_returns = pd.DataFrame(quantile_ret_list).dropna(how="all")
     quantile_returns.index = pd.DatetimeIndex(quantile_returns.index)
