@@ -288,25 +288,22 @@ _RISK_PROFILES = {
 # ---------------------------------------------------------------------------
 
 _from_leaderboard = st.session_state.pop("factor_from_leaderboard", None)
-_lb_factor_name = _from_leaderboard["factor_name"] if _from_leaderboard else None
+_lb_factor_name   = _from_leaderboard["factor_name"]   if _from_leaderboard else None
 _lb_factor_kwargs = _from_leaderboard["factor_kwargs"] if _from_leaderboard else {}
+_lb_config_hash   = _from_leaderboard.get("config_hash") if _from_leaderboard else None
+_lb_label         = _from_leaderboard.get("label", _lb_factor_name or "") if _from_leaderboard else ""
 
-# Build factor_params JSON for run_backtest / run_factor_diagnostics.
-# Maps each factor name → constructor kwargs so the backtest uses the exact
-# same parameters that were evaluated in Factor Research.
-_fp_factor_params_json = json.dumps(
-    {_lb_factor_name: _lb_factor_kwargs}
-    if _lb_factor_name and isinstance(_lb_factor_kwargs, dict)
-    else {},
-    sort_keys=True,
-)
+# Defaults — overwritten inside the sidebar's Factor Portfolio expander.
+fp_factor_names: tuple[str, ...] = ()
+_fp_factor_params_json: str = "{}"
+fp_long_pct: float = 0.10
 
 with st.sidebar:
     st.markdown('<p style="font-size:1.1rem;font-weight:700;margin:0 0 2px"><i class="fa-solid fa-gear ae-icon"></i>Configuration</p>', unsafe_allow_html=True)
     st.caption("UK Equity Research Framework")
 
     if _from_leaderboard:
-        st.success(f"Pre-loaded from Leaderboard: **{_lb_factor_name}**")
+        st.success(f"Pre-loaded from Leaderboard: **{_lb_label or _lb_factor_name}**")
 
     st.markdown('<p style="font-size:0.95rem;font-weight:600;margin:0.8rem 0 0.2rem"><i class="fa-solid fa-globe ae-icon"></i>Universe</p>', unsafe_allow_html=True)
     universe = st.selectbox(
@@ -356,28 +353,93 @@ with st.sidebar:
                                    format="%.0f%%")
         hold_days = st.slider("Hold days", 3, 30, 10, step=1)
 
-    from factors import list_factors, factor_metadata as _factor_meta
-    _available_factors = list_factors()
-    _factor_descriptions = _factor_meta()
+    # Load leaderboard to populate the Factor Portfolio selector with rich labels.
+    try:
+        from data.factor_research_log import load_leaderboard as _load_lb_fp
+        _fp_lb = _load_lb_fp()
+    except Exception:
+        _fp_lb = pd.DataFrame()
+
+    def _fp_factor_label(row) -> str:
+        """Rich label for a leaderboard row used inside the Factor Portfolio selector."""
+        name = str(row.get("factor_name", ""))
+        parts = [name]
+        for field, prefix in [("lookback", "lb"), ("skip", "skip"), ("ic_horizon", "h")]:
+            v = row.get(field, "")
+            try:
+                vi = int(float(v))
+                if vi > 0:
+                    parts.append(f"{prefix}={vi}{'d' if field == 'ic_horizon' else ''}")
+            except (TypeError, ValueError):
+                pass
+        try:
+            ir = float(row.get("ic_ir", float("nan")))
+            if np.isfinite(ir):
+                parts.append(f"IC IR={ir:.2f}")
+        except (TypeError, ValueError):
+            pass
+        return " | ".join(parts)
 
     with st.expander("Factor Portfolio", expanded=bool(_from_leaderboard)):
-        # Pre-select leaderboard factor if available
-        _fp_default = (
-            [_lb_factor_name] if _lb_factor_name and _lb_factor_name in _available_factors
-            else (_available_factors[:2] if len(_available_factors) >= 2 else _available_factors)
-        )
-        fp_selected = st.multiselect(
-            "Factors to combine",
-            _available_factors,
-            default=_fp_default,
-            format_func=lambda x: _factor_descriptions.get(x, {}).get("description", x),
-        )
-        fp_long_pct = st.slider("Long/short decile size ", 0.05, 0.30, 0.10, step=0.05,
-                                 format="%.0f%%",
-                                 help="Fraction of universe per long/short book")
+        if not _fp_lb.empty:
+            # Build config_hash → row map (leaderboard is already sorted by IC IR desc)
+            _fp_opts: dict[str, object] = {}
+            for _, _fpr in _fp_lb.iterrows():
+                _fph = str(_fpr.get("config_hash", ""))
+                if _fph:
+                    _fp_opts[_fph] = _fpr
 
-    fp_factor_names = tuple(fp_selected) if run_factor_portfolio else ()
+            if _fp_opts:
+                # Determine default: match the pre-loaded config_hash, then top of list
+                if _lb_config_hash and _lb_config_hash in _fp_opts:
+                    _fp_default_hashes = [_lb_config_hash]
+                else:
+                    _fp_default_hashes = [list(_fp_opts.keys())[0]]
+
+                fp_selected_hashes = st.multiselect(
+                    "Factors to combine",
+                    list(_fp_opts.keys()),
+                    default=_fp_default_hashes,
+                    format_func=lambda h: _fp_factor_label(_fp_opts[h]),
+                    help="Each entry is a unique factor configuration from the Leaderboard. "
+                         "Sorted by IC IR (best first).",
+                )
+
+                fp_long_pct = st.slider(
+                    "Long/short decile size ",
+                    0.05, 0.30, 0.10, step=0.05,
+                    format="%.0f%%",
+                    help="Fraction of universe per long/short book",
+                )
+
+                # Resolve selected hashes → names and params
+                _fp_resolved = [
+                    (str(_fp_opts[h].get("factor_name", "")), _fp_opts[h])
+                    for h in fp_selected_hashes if h in _fp_opts
+                ]
+                fp_factor_names = tuple(name for name, _ in _fp_resolved)
+                _fp_params_build: dict[str, dict] = {}
+                for _fname, _frow in _fp_resolved:
+                    _raw_kw = _frow.get("factor_kwargs", "{}")
+                    try:
+                        _kw = json.loads(_raw_kw) if isinstance(_raw_kw, str) else (
+                            _raw_kw if isinstance(_raw_kw, dict) else {}
+                        )
+                    except Exception:
+                        _kw = {}
+                    # Last selected config wins if two entries share a base factor name
+                    _fp_params_build[_fname] = _kw
+                _fp_factor_params_json = json.dumps(_fp_params_build, sort_keys=True)
+            else:
+                st.info("Leaderboard has no entries with a config hash. Re-run Factor Research.")
+        else:
+            st.info(
+                "No researched factors in the Leaderboard yet. "
+                "Run **Factor Research** and then return here to backtest."
+            )
+
     fp_factor_long_pct = fp_long_pct if run_factor_portfolio else 0.10
+    fp_factor_names    = fp_factor_names if run_factor_portfolio else ()
 
     # -----------------------------------------------------------------------
     # Risk Profile

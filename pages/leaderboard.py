@@ -43,6 +43,51 @@ def _signal_badge(ic_tstat: float, ic_mean: float) -> str:
     return "Weak"
 
 
+def _factor_label(row) -> str:
+    """
+    Build a rich display label for a leaderboard row that uniquely identifies
+    the factor configuration.
+
+    Format: ``factor_name | lb=N | skip=N | h=Nd | IC IR=N.NN``
+    """
+    name = str(row.get("factor_name", ""))
+
+    parts = [name]
+
+    lb = row.get("lookback", "")
+    try:
+        lb_i = int(float(lb))
+        if lb_i > 0:
+            parts.append(f"lb={lb_i}")
+    except (TypeError, ValueError):
+        pass
+
+    skip = row.get("skip", "")
+    try:
+        skip_i = int(float(skip))
+        if skip_i > 0:
+            parts.append(f"skip={skip_i}")
+    except (TypeError, ValueError):
+        pass
+
+    h = row.get("ic_horizon", "")
+    try:
+        h_i = int(float(h))
+        if h_i > 0:
+            parts.append(f"h={h_i}d")
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        ir = float(row.get("ic_ir", float("nan")))
+        if np.isfinite(ir):
+            parts.append(f"IC IR={ir:.2f}")
+    except (TypeError, ValueError):
+        pass
+
+    return " | ".join(parts)
+
+
 def _fmt_f3(v) -> str:
     try:
         return f"{float(v):.3f}" if np.isfinite(float(v)) else "—"
@@ -269,6 +314,16 @@ display_df["Signal"] = df.apply(
     lambda r: _signal_badge(r.get("ic_tstat", 0), r.get("ic_mean", 0)), axis=1
 )
 display_df["Factor"] = df["factor_name"]
+
+def _int_or_dash(v) -> str:
+    try:
+        i = int(float(v))
+        return str(i) if i > 0 else "—"
+    except (TypeError, ValueError):
+        return "—"
+
+display_df["Lookback"] = df["lookback"].map(_int_or_dash)
+display_df["Skip"] = df["skip"].map(_int_or_dash)
 INDEX_DISPLAY_NAMES = {"ftse100": "FTSE 100", "ftse250": "FTSE 250", "ftse_all": "FTSE All-Share"}
 display_df["Universe"] = df.get("universe", pd.Series(["—"]*len(df), index=df.index)).map(lambda x: INDEX_DISPLAY_NAMES.get(x, x) if isinstance(x, str) else x)
 display_df["IC Mean"] = df["ic_mean"].map(_fmt_f3)
@@ -290,40 +345,51 @@ st.dataframe(display_df, width="stretch", hide_index=True)
 
 st.divider()
 st.markdown('<h3 class="ae-sub"><i class="fa-solid fa-rocket ae-icon"></i>Use in Backtest</h3>', unsafe_allow_html=True)
-st.markdown("Select a factor from the leaderboard and send it straight to the Backtest page as a Factor Portfolio strategy.")
+st.markdown(
+    "Select a specific factor **configuration** and send it to the Backtest page. "
+    "Each row represents a unique combination of factor type, lookback, and horizon."
+)
 
-promo_col1, promo_col2 = st.columns([3, 1])
+# Build config_hash → row map.  df is already sorted by IC IR descending so the
+# best-performing configuration appears first in the selector.
+_promote_map: dict[str, pd.Series] = {}
+for _, _prow in df.iterrows():
+    _ph = str(_prow.get("config_hash", ""))
+    if _ph:
+        _promote_map[_ph] = _prow
 
-with promo_col1:
-    factor_options = df["factor_name"].tolist()
-    factor_labels = {
-        name: f"{name}  (t={_fmt_f2(df[df['factor_name']==name]['ic_tstat'].iloc[0])})"
-        for name in factor_options
-    }
-    selected_to_promote = st.selectbox(
-        "Factor",
-        factor_options,
-        format_func=lambda x: factor_labels.get(x, x),
-        key="promote_factor",
-    )
+if not _promote_map:
+    st.info("No factor configurations with a valid config hash found. Re-run Factor Research.")
+else:
+    promo_col1, promo_col2 = st.columns([3, 1])
 
-with promo_col2:
-    st.markdown("&nbsp;", unsafe_allow_html=True)  # vertical spacer
-    promote_btn = st.button("Use in Backtest", type="primary")
+    with promo_col1:
+        selected_hash = st.selectbox(
+            "Factor configuration",
+            list(_promote_map.keys()),
+            format_func=lambda h: _factor_label(_promote_map[h]),
+            key="promote_factor",
+        )
 
-if promote_btn and selected_to_promote:
-    row = df[df["factor_name"] == selected_to_promote].iloc[0]
-    raw_kwargs = row.get("factor_kwargs", "{}")
-    try:
-        factor_kwargs = json.loads(raw_kwargs) if isinstance(raw_kwargs, str) else {}
-    except Exception:
-        factor_kwargs = {}
+    with promo_col2:
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        promote_btn = st.button("Use in Backtest", type="primary")
 
-    st.session_state["factor_from_leaderboard"] = {
-        "factor_name": selected_to_promote,
-        "factor_kwargs": factor_kwargs,
-    }
-    st.switch_page("pages/backtest.py")
+    if promote_btn and selected_hash:
+        _promo_row = _promote_map[selected_hash]
+        raw_kw = _promo_row.get("factor_kwargs", "{}")
+        try:
+            factor_kwargs = json.loads(raw_kw) if isinstance(raw_kw, str) else {}
+        except Exception:
+            factor_kwargs = {}
+
+        st.session_state["factor_from_leaderboard"] = {
+            "factor_name": str(_promo_row.get("factor_name", "")),
+            "factor_kwargs": factor_kwargs,
+            "config_hash": selected_hash,
+            "label": _factor_label(_promo_row),
+        }
+        st.switch_page("pages/backtest.py")
 
 # ---------------------------------------------------------------------------
 # Danger zone
