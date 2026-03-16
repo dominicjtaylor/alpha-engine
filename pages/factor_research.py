@@ -111,33 +111,11 @@ st.markdown(
 # Compact 3-column intro banner
 _b1, _b2, _b3 = st.columns(3)
 with _b1:
-    st.markdown("""
-    <div style="background:#1e2a3a;border-left:3px solid #3b82f6;padding:12px 14px;border-radius:4px;font-size:0.9rem;line-height:1.55">
-    <strong><i class="fa-solid fa-brain ae-icon" style="color:#3b82f6"></i>What is a factor?</strong><br>
-    Any signal that might predict which stocks will outperform — e.g. past 12-month return,
-    recent reversal, earnings surprise. This page tests the signal statistically before you trade on it.
-    </div>
-    """, unsafe_allow_html=True)
+    st.info("**What is a factor?**\n\nAny signal that might predict which stocks will outperform — e.g. past 12-month return, recent reversal, earnings surprise. This page tests the signal statistically before you trade on it.")
 with _b2:
-    st.markdown("""
-    <div style="background:#1e2a3a;border-left:3px solid #3b82f6;padding:12px 14px;border-radius:4px;font-size:0.9rem;line-height:1.55">
-    <strong><i class="fa-solid fa-chart-line ae-icon" style="color:#3b82f6"></i>Key metric: IC</strong><br>
-    Spearman correlation between factor scores and next-period returns.
-    Ranges −1 to +1. Equity factors rarely exceed 0.10.<br>
-    <strong>|t-stat| &gt; 2.0</strong> = significant at ~95% confidence.
-    </div>
-    """, unsafe_allow_html=True)
+    st.info("**Key metric: IC**\n\nSpearman correlation between factor scores and next-period returns. Ranges −1 to +1. Equity factors rarely exceed 0.10.\n\n**|t-stat| > 2.0** = significant at ~95% confidence.")
 with _b3:
-    st.markdown("""
-    <div style="background:#1e2a3a;border-left:3px solid #3b82f6;padding:12px 14px;border-radius:4px;font-size:0.9rem;line-height:1.55">
-    <strong><i class="fa-solid fa-route ae-icon" style="color:#3b82f6"></i>Typical workflow</strong><br>
-    1. Pick factor + date range<br>
-    2. Run Factor Analysis<br>
-    3. Check IC Mean &amp; t-stat<br>
-    4. Check Decay — how fast does it fade?<br>
-    5. Save to Leaderboard if promising
-    </div>
-    """, unsafe_allow_html=True)
+    st.info("**Typical workflow**\n\n1. Pick factor + date range\n2. Run Factor Analysis\n3. Check IC Mean & t-stat\n4. Check Decay — how fast does it fade?\n5. Save to Leaderboard if promising")
 
 # ---------------------------------------------------------------------------
 # Sidebar — controls
