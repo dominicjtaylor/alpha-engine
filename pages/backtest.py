@@ -6,6 +6,7 @@ Historical backtesting of UK equity strategies with realistic costs.
 
 from __future__ import annotations
 
+import json
 import sys
 import logging
 from pathlib import Path
@@ -106,6 +107,7 @@ def run_backtest(
     combination: str,
     fp_factor_names: tuple[str, ...] = (),
     fp_factor_long_pct: float = 0.10,
+    fp_factor_params_json: str = "{}",
     force_refresh: bool = False,
 ):
     """Run the full pipeline. Cached by all input parameters."""
@@ -160,9 +162,11 @@ def run_backtest(
         "earnings": EarningsRevisionDrift(strat_cfg),
     }
     if "factor_portfolio" in strategies_selected and fp_factor_names:
+        _fp_params = json.loads(fp_factor_params_json)
         strategy_map["factor_portfolio"] = FactorPortfolioStrategy(
             strat_cfg,
             factor_names=list(fp_factor_names),
+            factor_params=_fp_params,
             long_pct=fp_factor_long_pct,
         )
     strategy_results = {}
@@ -204,6 +208,67 @@ def run_backtest(
     return backtest_results, all_metrics, prices, returns, benchmark_returns
 
 
+@st.cache_data(show_spinner="Running factor pipeline diagnostics…")
+def run_factor_diagnostics(
+    universe: str,
+    universe_size: int,
+    start: str,
+    end: str,
+    fp_factor_names: tuple[str, ...],
+    fp_factor_long_pct: float,
+    fp_factor_params_json: str,
+    force_refresh: bool = False,
+) -> dict:
+    """
+    Generate factor signals and run all pre-backtest diagnostic checks.
+
+    Validates signal dispersion, time variation, IC, portfolio weights,
+    and a random-signal sanity check.  Returns a dict of diagnostic results
+    for display in the UI.
+    """
+    from config import DataConfig, StrategyConfig
+    from data.data_loader import DataLoader, clean_data, compute_returns
+    from data.universe import load_ftse_universe, apply_liquidity_filters
+    from strategies.factor_portfolio import FactorPortfolioStrategy
+    from factors.signal_validator import validate_signal, validate_weights, run_random_sanity_check
+
+    fp_factor_params = json.loads(fp_factor_params_json)
+
+    # Load data (re-uses parquet cache so this is fast after first run)
+    data_cfg = DataConfig(universe=universe, universe_size=universe_size)
+    tickers = load_ftse_universe(index=universe, top_n=universe_size)
+    loader = DataLoader(cache_dir="data/cache", config=data_cfg)
+    prices_raw = loader.load_price_data(tickers, start, end, force_refresh=force_refresh)
+    prices = clean_data(prices_raw, data_cfg.min_history_days, data_cfg.max_forward_fill_days)
+    prices = prices[apply_liquidity_filters(
+        list(prices.columns), prices, min_price_gbp=data_cfg.min_price
+    )]
+    returns = compute_returns(prices)
+
+    # Generate composite signal with the exact params that will be used in the backtest
+    strat_cfg = StrategyConfig()
+    strategy = FactorPortfolioStrategy(
+        strat_cfg,
+        factor_names=list(fp_factor_names),
+        factor_params=fp_factor_params,
+        long_pct=fp_factor_long_pct,
+    )
+    sr = strategy.run(prices, returns)
+
+    fwd_returns = returns.shift(-1)
+
+    signal_diag = validate_signal(sr.signals, fwd_returns)
+    weight_diag = validate_weights(sr.weights)
+    random_diag = run_random_sanity_check(prices, returns, long_pct=fp_factor_long_pct)
+
+    return {
+        "signal": signal_diag,
+        "weights": weight_diag,
+        "random": random_diag,
+        "factor_params_used": fp_factor_params,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Sidebar — configuration
 # ---------------------------------------------------------------------------
@@ -225,6 +290,16 @@ _RISK_PROFILES = {
 _from_leaderboard = st.session_state.pop("factor_from_leaderboard", None)
 _lb_factor_name = _from_leaderboard["factor_name"] if _from_leaderboard else None
 _lb_factor_kwargs = _from_leaderboard["factor_kwargs"] if _from_leaderboard else {}
+
+# Build factor_params JSON for run_backtest / run_factor_diagnostics.
+# Maps each factor name → constructor kwargs so the backtest uses the exact
+# same parameters that were evaluated in Factor Research.
+_fp_factor_params_json = json.dumps(
+    {_lb_factor_name: _lb_factor_kwargs}
+    if _lb_factor_name and isinstance(_lb_factor_kwargs, dict)
+    else {},
+    sort_keys=True,
+)
 
 with st.sidebar:
     st.markdown('<p style="font-size:1.1rem;font-weight:700;margin:0 0 2px"><i class="fa-solid fa-gear ae-icon"></i>Configuration</p>', unsafe_allow_html=True)
@@ -471,6 +546,18 @@ if not run_btn and "backtest_results" not in st.session_state:
 
 # Run or use cached results
 if run_btn:
+    # Run factor diagnostics first so warnings are visible even if backtest is slow
+    if "factor_portfolio" in strategies_selected and fp_factor_names:
+        with st.spinner("Validating factor pipeline…"):
+            _factor_diag = run_factor_diagnostics(
+                universe, universe_size, start_date, end_date,
+                fp_factor_names, fp_factor_long_pct, _fp_factor_params_json,
+                force_refresh=force_refresh,
+            )
+        st.session_state["factor_diagnostics"] = _factor_diag
+    else:
+        st.session_state.pop("factor_diagnostics", None)
+
     with st.spinner("Running pipeline…"):
         backtest_results, all_metrics, prices, returns, benchmark_returns = run_backtest(
             universe, universe_size, start_date, end_date,
@@ -482,6 +569,7 @@ if run_btn:
             float(commission_bps), float(slippage_bps), stamp_duty_pct,
             float(initial_capital), combination,
             fp_factor_names, fp_factor_long_pct,
+            _fp_factor_params_json,
             force_refresh,
         )
     st.session_state["backtest_results"] = backtest_results
@@ -496,6 +584,105 @@ all_metrics = st.session_state["all_metrics"]
 prices = st.session_state["prices"]
 returns = st.session_state["returns"]
 benchmark_returns = st.session_state.get("benchmark_returns", None)
+
+# ---------------------------------------------------------------------------
+# Factor Pipeline Diagnostics (shown when factor_portfolio was run)
+# ---------------------------------------------------------------------------
+
+if "factor_diagnostics" in st.session_state:
+    _fd = st.session_state["factor_diagnostics"]
+    _sig = _fd["signal"]
+    _wts = _fd["weights"]
+    _rnd = _fd.get("random")
+    _used_params = _fd.get("factor_params_used", {})
+
+    _all_warnings: list[str] = (
+        _sig["warnings"]
+        + _wts["warnings"]
+        + (_rnd["warnings"] if _rnd else [])
+    )
+
+    _diag_label = (
+        '<i class="fa-solid fa-triangle-exclamation ae-icon" style="color:#f59e0b"></i>'
+        "Factor Pipeline Diagnostics — Warnings Detected"
+        if _all_warnings else
+        '<i class="fa-solid fa-circle-check ae-icon" style="color:#22c55e"></i>'
+        "Factor Pipeline Diagnostics — All Checks Passed"
+    )
+
+    with st.expander(_diag_label, expanded=bool(_all_warnings)):
+        # Show which params were actually used
+        if _used_params:
+            _param_strs = [
+                f"**{k}**: {', '.join(f'{pk}={pv}' for pk, pv in v.items()) or 'defaults'}"
+                for k, v in _used_params.items()
+            ]
+            st.caption("Parameters used in this backtest: " + "  |  ".join(_param_strs))
+
+        # ── Signal checks ────────────────────────────────────────────────────
+        st.markdown('<p class="ae-sub"><i class="fa-solid fa-wave-square ae-icon"></i>Signal Validation</p>', unsafe_allow_html=True)
+
+        _c1, _c2, _c3, _c4, _c5 = st.columns(5)
+        _c1.metric("CS Dispersion", f"{_sig['mean_cs_std']:.4f}",
+                   help="Mean cross-sectional std across stocks per date. Near zero = constant signal.")
+        _c2.metric("TS Variation", f"{_sig['mean_ts_std']:.4f}",
+                   help="Mean time-series std per ticker. Near zero = stale signal.")
+        _c3.metric("NaN Coverage", f"{_sig['nan_pct']:.1%}",
+                   help="Fraction of signal cells that are NaN. >95% = insufficient history.")
+        _c4.metric("Signal Std", f"{_sig['signal_std']:.4f}" if not np.isnan(_sig['signal_std']) else "—",
+                   help="Overall standard deviation of all non-NaN signal values.")
+        if _sig["mean_ic"] is not None:
+            _c5.metric("Mean IC", f"{_sig['mean_ic']:.4f}",
+                       help="Spearman IC between signal and 1-day forward returns (sampled).")
+        else:
+            _c5.metric("Mean IC", "—")
+
+        for _w in _sig["warnings"]:
+            st.warning(_w)
+        if not _sig["warnings"]:
+            st.success("Signal checks passed — dispersion, variation, and coverage all look healthy.")
+
+        st.divider()
+
+        # ── Weight checks ─────────────────────────────────────────────────────
+        st.markdown('<p class="ae-sub"><i class="fa-solid fa-scale-balanced ae-icon"></i>Portfolio Weight Validation</p>', unsafe_allow_html=True)
+
+        _w1, _w2, _w3, _w4, _w5 = st.columns(5)
+        _w1.metric("Long Sum", f"{_wts['mean_long_sum']:.3f}",
+                   help="Mean long book weight sum per date. Should be ~1.0.")
+        _w2.metric("Short Sum", f"{_wts['mean_short_sum']:.3f}",
+                   help="Mean short book weight sum per date. Should be ~-1.0.")
+        _w3.metric("Net Exposure", f"{_wts['mean_net_sum']:.3f}",
+                   help="Mean net weight sum. Should be ~0 for dollar-neutral.")
+        _w4.metric("Active Days", f"{_wts['active_days']}/{_wts['total_days']}",
+                   help="Number of dates with at least one non-zero position.")
+        _w5.metric("Avg Positions",
+                   f"{_wts['avg_long_positions']:.1f}L / {_wts['avg_short_positions']:.1f}S"
+                   if not np.isnan(_wts['avg_long_positions']) else "—",
+                   help="Average long and short position count per active day.")
+
+        for _w in _wts["warnings"]:
+            st.warning(_w)
+        if not _wts["warnings"]:
+            st.success("Portfolio weight checks passed — books are properly sized and active.")
+
+        st.divider()
+
+        # ── Random sanity check ───────────────────────────────────────────────
+        if _rnd is not None:
+            st.markdown('<p class="ae-sub"><i class="fa-solid fa-shuffle ae-icon"></i>Random Signal Sanity Check</p>', unsafe_allow_html=True)
+            st.caption(
+                "Backtest run with a purely random signal (seed=42) using the same universe and date range. "
+                "Expected: Sharpe ≈ 0, modest negative return (transaction costs), drawdown < 25%."
+            )
+            _r1, _r2, _r3 = st.columns(3)
+            _r1.metric("Random Sharpe", f"{_rnd['sharpe']:.2f}" if not np.isnan(_rnd['sharpe']) else "—")
+            _r2.metric("Random Return", f"{_rnd['annual_return']:.1%}" if not np.isnan(_rnd['annual_return']) else "—")
+            _r3.metric("Random Max DD", f"{_rnd['max_drawdown']:.1%}" if not np.isnan(_rnd['max_drawdown']) else "—")
+            for _w in _rnd["warnings"]:
+                st.warning(_w)
+            if not _rnd["warnings"]:
+                st.success("Random sanity check passed — portfolio engine behaviour is consistent.")
 
 # ---------------------------------------------------------------------------
 # Tabs
