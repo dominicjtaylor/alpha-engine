@@ -1,0 +1,23 @@
+{
+  "created_date": "2026-03-16",
+  "last_rebalanced": null,
+  "last_price_update": null,
+  "initial_capital": 10000.0,
+  "cash": 10000.0,
+  "positions": {},
+  "equity_history": [
+    {
+      "date": "2026-03-16",
+      "equity": 10000.0
+    }
+  ],
+  "trade_log": [],
+  "config": {
+    "strategy": "momentum",
+    "universe": "ftse100",
+    "universe_size": 100,
+    "commission_bps": 10.0,
+    "slippage_bps": 10.0,
+    "stamp_duty_rate": 0.005
+  }
+}

@@ -53,28 +53,28 @@ class CrossSectionalMomentum(BaseStrategy):
         **kwargs,
     ) -> pd.DataFrame:
         """
-        Compute 12-1 momentum scores.
+        Compute 12-1 momentum scores via the factor registry.
 
-        Signal = prices.shift(skip) / prices.shift(lookback) - 1
-
-        This gives the cumulative return from t-252 to t-21 (using defaults),
-        computed entirely from lagged prices so there is no look-ahead bias.
+        Delegates to :class:`factors.momentum_12_1.Momentum121Factor` so that
+        research and backtesting use identical signal computation.
 
         Parameters
         ----------
         prices : pd.DataFrame
             Adjusted close prices (index=date, columns=tickers).
         returns : pd.DataFrame
-            Daily returns (not used directly, but accepted for interface consistency).
+            Daily returns (forwarded to factor; not used by this factor).
 
         Returns
         -------
         pd.DataFrame
             Momentum scores. First ``lookback`` rows are NaN.
         """
-        signals = prices.shift(self.skip) / prices.shift(self.lookback) - 1
+        from factors import get_factor
+        factor = get_factor("momentum_12_1", lookback=self.lookback, skip=self.skip)
+        signals = factor.compute(prices, returns)
         logger.debug(
-            "Momentum signals computed. Non-NaN cells: %d / %d",
+            "Momentum signals computed via registry. Non-NaN cells: %d / %d",
             signals.notna().sum().sum(), signals.size,
         )
         return signals

@@ -56,28 +56,30 @@ class ShortTermMeanReversion(BaseStrategy):
         **kwargs,
     ) -> pd.DataFrame:
         """
-        Compute 5-day cumulative return as the raw signal.
+        Compute mean-reversion scores via the factor registry.
 
-        Signal = prices[t] / prices[t - lookback] - 1
-
-        A **negative** signal (recent loser) implies a long position after
-        signal inversion in :meth:`construct_portfolio`.
+        Delegates to :class:`factors.mean_reversion_5d.MeanReversion5dFactor`.
+        The factor returns the **negated** N-day return so that the polarity
+        contract is honoured: high score = recent loser = expected bounce.
 
         Parameters
         ----------
         prices : pd.DataFrame
             Adjusted close prices (index=date, columns=tickers).
         returns : pd.DataFrame
-            Daily returns (accepted for interface consistency, not used directly).
+            Daily returns (forwarded to factor; not used by this factor).
 
         Returns
         -------
         pd.DataFrame
-            5-day cumulative return scores. First ``lookback`` rows are NaN.
+            Mean-reversion scores. First ``lookback`` rows are NaN.
+            High score = recent loser = long candidate.
         """
-        signals = prices / prices.shift(self.lookback) - 1
+        from factors import get_factor
+        factor = get_factor("mean_reversion_5d", lookback=self.lookback)
+        signals = factor.compute(prices, returns)
         logger.debug(
-            "MeanReversion signals computed. Lookback=%d. Non-NaN: %d / %d",
+            "MeanReversion signals computed via registry. Lookback=%d. Non-NaN: %d / %d",
             self.lookback, signals.notna().sum().sum(), signals.size,
         )
         return signals
@@ -88,21 +90,22 @@ class ShortTermMeanReversion(BaseStrategy):
         prices: pd.DataFrame,
     ) -> pd.DataFrame:
         """
-        Convert 5-day return scores to equal-weighted contrarian weights.
+        Convert mean-reversion scores to equal-weighted contrarian weights.
 
-        Signal polarity is **inverted**: low 5-day return → long position,
-        high 5-day return → short position.
+        Because the factor already negated the raw return (high score = recent
+        loser), portfolio construction is now identical to momentum: long top
+        scores, short bottom scores.
 
         Algorithm (per date row):
-        1. Rank tickers by 5-day return (ascending: lowest return = rank 0).
-        2. Short mask: rank >= (1 - long_pct) — recent winners.
-        3. Long mask: rank <= long_pct — recent losers.
+        1. Rank tickers by score (ascending: recent winner = low score).
+        2. Long mask: rank >= (1 - long_pct) — recent losers (high score).
+        3. Short mask: rank <= long_pct — recent winners (low score).
         4. Equal-weight within each book.
 
         Parameters
         ----------
         signals : pd.DataFrame
-            5-day return scores from :meth:`generate_signals`.
+            Mean-reversion scores from :meth:`generate_signals`.
         prices : pd.DataFrame
             Prices (not used directly).
 
@@ -111,14 +114,14 @@ class ShortTermMeanReversion(BaseStrategy):
         pd.DataFrame
             Signed portfolio weights. Recent losers are long (+), winners short (-).
         """
-        # Percentile ranks: 0 = biggest loser, 1 = biggest winner
+        # Percentile ranks: 0 = recent winner (low score), 1 = recent loser (high score)
         ranks = self._rank_cross_section(signals, ascending=True, pct=True)
 
-        # Long mask: recent losers (low rank = low recent return)
-        long_mask = (ranks <= self.long_pct) & signals.notna()
+        # Long mask: high scores = recent losers
+        long_mask = (ranks >= (1.0 - self.long_pct)) & signals.notna()
 
-        # Short mask: recent winners (high rank = high recent return)
-        short_mask = (ranks >= (1.0 - self.long_pct)) & signals.notna()
+        # Short mask: low scores = recent winners
+        short_mask = (ranks <= self.long_pct) & signals.notna()
 
         long_weights = self._equal_weight_book(long_mask, sign=1.0)
         short_weights = self._equal_weight_book(short_mask, sign=-1.0)

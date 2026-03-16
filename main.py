@@ -163,6 +163,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip chart generation (faster for scripting)",
     )
+    parser.add_argument(
+        "--refresh-data",
+        action="store_true",
+        help="Delete cached price data and re-download from Yahoo Finance",
+    )
     return parser
 
 
@@ -219,6 +224,7 @@ def run_full_backtest(
         tickers=tickers,
         start_date=args.start,
         end_date=args.end,
+        force_refresh=getattr(args, "refresh_data", False),
     )
     logger.info("Raw prices shape: %s", prices_raw.shape)
 
@@ -314,12 +320,30 @@ def run_full_backtest(
         backtest_results[name] = bt
 
     # ------------------------------------------------------------------
-    # 7. Performance metrics + table
+    # 7. Benchmark
     # ------------------------------------------------------------------
-    logger.info("=== Step 7: Computing performance metrics ===")
+    logger.info("=== Step 7: Loading passive benchmark ===")
+    benchmark_returns = None
+    try:
+        from data.benchmark import load_benchmark_returns
+        benchmark_returns = load_benchmark_returns(
+            start_date=args.start, end_date=args.end
+        )
+        logger.info("Benchmark loaded: %d days", len(benchmark_returns))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Benchmark load failed (continuing without): %s", exc)
+
+    # ------------------------------------------------------------------
+    # 8. Performance metrics + table
+    # ------------------------------------------------------------------
+    logger.info("=== Step 8: Computing performance metrics ===")
     all_metrics = {}
     for name, bt in backtest_results.items():
-        all_metrics[name] = compute_metrics(bt.daily_returns, currency="GBP")
+        all_metrics[name] = compute_metrics(
+            bt.daily_returns,
+            benchmark_returns=benchmark_returns,
+            currency="GBP",
+        )
 
     print(format_metrics_table(all_metrics, currency="GBP"))
 
@@ -330,16 +354,19 @@ def run_full_backtest(
     logger.info("Metrics saved: %s", csv_path)
 
     # ------------------------------------------------------------------
-    # 8. Visualisations
+    # 9. Visualisations
     # ------------------------------------------------------------------
     if not args.no_charts:
-        logger.info("=== Step 8: Generating charts ===")
+        logger.info("=== Step 9: Generating charts ===")
         viz = PerformanceVisualizer()
 
         # Individual strategy dashboards
         for name, bt in backtest_results.items():
             if name != "Combined":
-                saved = viz.save_all(bt, output_dir=str(output_dir))
+                saved = viz.save_all(
+                    bt, output_dir=str(output_dir),
+                    benchmark_returns=benchmark_returns,
+                )
                 logger.info("Charts saved for %s: %s", name, saved)
 
         # Comparison chart (if multiple strategies)
@@ -352,8 +379,13 @@ def run_full_backtest(
                 plt.close(fig_compare)
                 logger.info("Comparison chart saved: %s", compare_path)
 
-                # Overlaid equity curves
+                # Overlaid equity curves (strategies + benchmark)
                 equity_curves = {n: r.equity_curve for n, r in backtest_results.items()}
+                if benchmark_returns is not None:
+                    from data.benchmark import get_benchmark_equity_curve
+                    bench_equity = get_benchmark_equity_curve(benchmark_returns)
+                    # Normalise to base=1 like the strategies
+                    equity_curves["Benchmark"] = bench_equity
                 fig_eq = viz.plot_equity_curve(equity_curves, normalise=True)
                 eq_path = str(output_dir / "equity_curves_all.png")
                 fig_eq.savefig(eq_path, dpi=150, bbox_inches="tight")
@@ -362,7 +394,7 @@ def run_full_backtest(
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Comparison chart failed: %s", exc)
 
-    logger.info("=== Pipeline complete. Results in: %s ===", output_dir)
+    logger.info("=== Pipeline complete. Results in: %s ===", str(output_dir))
 
 
 def run_walk_forward(config, args: argparse.Namespace) -> None:
@@ -383,7 +415,7 @@ def run_walk_forward(config, args: argparse.Namespace) -> None:
 
     tickers = load_ftse_universe(index=args.universe, top_n=config.data.universe_size)
     loader = DataLoader(cache_dir=config.data.cache_dir, config=config.data)
-    prices_raw = loader.load_price_data(tickers, args.start, args.end)
+    prices_raw = loader.load_price_data(tickers, args.start, args.end, force_refresh=getattr(args, "refresh_data", False))
     prices = clean_data(prices_raw, config.data.min_history_days, config.data.max_forward_fill_days)
     prices = prices[apply_liquidity_filters(list(prices.columns), prices,
                                             min_price_gbp=config.data.min_price)]
@@ -452,7 +484,7 @@ def run_parameter_sweep(config, args: argparse.Namespace) -> None:
     # For sweep, use a shorter period / smaller universe for speed
     tickers = load_ftse_universe(index="ftse100", top_n=100)
     loader = DataLoader(cache_dir=config.data.cache_dir, config=config.data)
-    prices_raw = loader.load_price_data(tickers, args.start, args.end)
+    prices_raw = loader.load_price_data(tickers, args.start, args.end, force_refresh=getattr(args, "refresh_data", False))
     prices = clean_data(prices_raw, config.data.min_history_days, config.data.max_forward_fill_days)
     prices = prices[apply_liquidity_filters(list(prices.columns), prices,
                                             min_price_gbp=config.data.min_price)]

@@ -67,6 +67,7 @@ class PerformanceVisualizer:
         result: BacktestResult,
         title: str = "",
         risk_free_rate: float = 0.04,
+        benchmark_returns: Optional[pd.Series] = None,
     ) -> plt.Figure:
         """
         Multi-panel performance dashboard.
@@ -104,7 +105,7 @@ class PerformanceVisualizer:
         ax_vol = fig.add_subplot(gs[2, 1])
 
         # Panel 1: Equity curve
-        self._plot_equity_panel(ax_equity, result, risk_free_rate)
+        self._plot_equity_panel(ax_equity, result, risk_free_rate, benchmark_returns)
 
         # Panel 2: Rolling Sharpe
         rolling_sharpe = compute_rolling_sharpe(result.daily_returns, window=63,
@@ -395,6 +396,7 @@ class PerformanceVisualizer:
         result: BacktestResult,
         output_dir: str,
         dpi: int = 150,
+        benchmark_returns: Optional[pd.Series] = None,
     ) -> list[str]:
         """
         Generate and save all standard charts for a single strategy.
@@ -418,11 +420,22 @@ class PerformanceVisualizer:
         name = result.strategy_name.replace(" ", "_").lower()
         saved: list[str] = []
 
+        equity_curves: dict[str, pd.Series] = {result.strategy_name: result.equity_curve}
+        if benchmark_returns is not None:
+            from data.benchmark import get_benchmark_equity_curve
+            bench_equity = get_benchmark_equity_curve(benchmark_returns)
+            # Normalise benchmark to strategy start value
+            common = result.equity_curve.index.intersection(bench_equity.index)
+            if len(common) > 0:
+                bench_equity = bench_equity.loc[common]
+                bench_equity = bench_equity / bench_equity.iloc[0] * result.equity_curve.iloc[0]
+                equity_curves["Benchmark (Vanguard-style)"] = bench_equity
+
         charts = {
-            f"{name}_dashboard.png": self.plot_performance_dashboard(result),
-            f"{name}_equity.png": self.plot_equity_curve(
-                {result.strategy_name: result.equity_curve}
+            f"{name}_dashboard.png": self.plot_performance_dashboard(
+                result, benchmark_returns=benchmark_returns
             ),
+            f"{name}_equity.png": self.plot_equity_curve(equity_curves),
             f"{name}_drawdown.png": self.plot_drawdown(
                 {result.strategy_name: result.drawdowns}
             ),
@@ -470,6 +483,7 @@ class PerformanceVisualizer:
         ax: plt.Axes,
         result: BacktestResult,
         risk_free_rate: float,
+        benchmark_returns: Optional[pd.Series] = None,
     ) -> None:
         """Draw equity curve with drawdown shading and metrics annotation."""
         equity = result.equity_curve
@@ -479,6 +493,18 @@ class PerformanceVisualizer:
         colour = STRATEGY_COLOURS[0]
         ax.plot(equity.index, equity.values, color=colour, linewidth=1.8,
                 label=f"{result.strategy_name}")
+
+        # Benchmark overlay (normalised to strategy start value)
+        if benchmark_returns is not None:
+            from data.benchmark import get_benchmark_equity_curve
+            bench_equity = get_benchmark_equity_curve(benchmark_returns)
+            common = equity.index.intersection(bench_equity.index)
+            if len(common) > 0:
+                bench_equity = bench_equity.loc[common]
+                bench_equity = bench_equity / bench_equity.iloc[0] * equity.iloc[0]
+                ax.plot(bench_equity.index, bench_equity.values,
+                        color="grey", linewidth=1.2, linestyle="--",
+                        alpha=0.7, label="Benchmark (Vanguard-style)")
 
         # Drawdown shading (secondary y-axis)
         ax2 = ax.twinx()

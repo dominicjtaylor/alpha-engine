@@ -1,8 +1,7 @@
 """
-Alpha Engine — Home
+Alpha Engine — entry point.
 
-Entry point for the Streamlit multi-page app.
-Navigation is available in the sidebar.
+Defines multi-page navigation order. All page content lives in pages/.
 """
 
 from __future__ import annotations
@@ -21,64 +20,25 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("📈 Alpha Engine")
-st.subheader("UK Systematic Trading Research Framework")
-
+# Font Awesome + shared heading styles (loaded once, available to all pages)
 st.markdown("""
-A modular research platform for backtesting and simulating evidence-based
-equity strategies on **London Stock Exchange (LSE)** securities.
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<style>
+.ae-title  { font-size:2rem;  font-weight:700; margin:0 0 0.2rem; line-height:1.25; }
+.ae-header { font-size:1.45rem; font-weight:600; margin:1.1rem 0 0.3rem; }
+.ae-sub    { font-size:1.1rem;  font-weight:600; margin:0.8rem 0 0.2rem; }
+.ae-icon   { margin-right:8px; opacity:0.9; }
+.ae-badge-green  { color:#22c55e; font-weight:700; }
+.ae-badge-yellow { color:#f59e0b; font-weight:700; }
+.ae-badge-red    { color:#ef4444; font-weight:700; }
+</style>
+""", unsafe_allow_html=True)
 
-All performance is reported in **GBP (£)**.
-""")
-
-st.divider()
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.markdown("""
-    ### 📊 Backtest
-    Run historical simulations on FTSE 100 / 250 equities.
-    Compare strategies, tune parameters, and analyse performance
-    with realistic UK transaction costs and stamp duty.
-
-    → Use the **Backtest** page in the sidebar
-    """)
-
-with col2:
-    st.markdown("""
-    ### 📝 Paper Trading
-    Simulate live strategy execution with fake money.
-    Generate today's signals from the latest LSE prices,
-    preview the rebalance, and track your paper P&L over time.
-
-    → Use the **Paper Trading** page in the sidebar
-    """)
-
-with col3:
-    st.markdown("""
-    ### 🔬 Factor Research
-    Evaluate signals as alpha factors. Measure IC (information
-    coefficient), factor decay curves, and quantile portfolio
-    return spreads to verify a signal has genuine predictive power.
-
-    → Use the **Factor Research** page in the sidebar
-    """)
-
-st.divider()
-
-st.markdown("""
-### Strategies
-
-| Strategy | Signal | Rebalance |
-|---|---|---|
-| **Momentum (12-1)** | 12-month return excl. last month | Monthly |
-| **Mean Reversion (5-day)** | Contrarian 5-day return | Daily |
-| **Earnings Drift** | Overnight gap > 5% (PEAD proxy) | Event-driven |
-
-### UK Market Details
-- Tickers use **`.L` suffix** (Yahoo Finance LSE convention)
-- Trading calendar: **LSE** (excludes UK bank holidays)
-- Transaction costs: **commission + slippage + 0.5% SDRT** on long purchases
-- Default leverage cap: **1.5×**
-""")
+pg = st.navigation([
+    st.Page("pages/factor_research.py", title="Factor Research", icon="🔬"),
+    st.Page("pages/leaderboard.py", title="Leaderboard", icon="🏆"),
+    st.Page("pages/backtest.py", title="Backtest", icon="📊"),
+    st.Page("pages/paper_trading.py", title="Paper Trading", icon="📝"),
+    st.Page("pages/help.py", title="Help", icon="❓"),
+])
+pg.run()

@@ -341,19 +341,28 @@ def compute_metrics(
         if len(common) > 30:
             r = clean.loc[common]
             b = bench_clean.loc[common]
-            covariance = np.cov(r, b)
-            beta = float(covariance[0, 1] / covariance[1, 1]) if covariance[1, 1] != 0 else float("nan")
-            alpha_daily = float(r.mean() - beta * b.mean())
-            ann_alpha = float(alpha_daily * TRADING_DAYS_PER_YEAR)
-            active_return = r - b
-            info_ratio = float(
-                active_return.mean() / active_return.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
-            ) if active_return.std() != 0 else float("nan")
-            metrics.update({
-                "beta": beta,
-                "alpha": ann_alpha,
+
+            # Benchmark standalone stats
+            bench_metrics = {
+                "benchmark_cagr": annual_return(b),
+                "benchmark_volatility": annual_volatility(b),
+                "benchmark_sharpe": sharpe_ratio(b, risk_free_rate),
+                "benchmark_max_drawdown": max_drawdown(b),
+            }
+
+            # Relative metrics (simple active-return definitions)
+            active = r - b
+            alpha = float(active.mean() * TRADING_DAYS_PER_YEAR)
+            tracking_error = float(active.std() * np.sqrt(TRADING_DAYS_PER_YEAR))
+            info_ratio = (alpha / tracking_error
+                          if tracking_error != 0 else float("nan"))
+
+            bench_metrics.update({
+                "alpha": alpha,
+                "tracking_error": tracking_error,
                 "information_ratio": info_ratio,
             })
+            metrics.update(bench_metrics)
 
     logger.debug("Metrics computed for %d-day return series.", len(clean))
     return metrics
@@ -382,6 +391,11 @@ def format_metrics_table(
         return "No metrics to display."
 
     strategy_names = list(metrics_dict.keys())
+    # Check if any strategy has benchmark metrics
+    has_benchmark = any(
+        "benchmark_cagr" in m for m in metrics_dict.values()
+    )
+
     display_keys = [
         ("annual_return", "Annual Return", "{:.1%}"),
         ("annual_volatility", "Annual Vol", "{:.1%}"),
@@ -393,6 +407,15 @@ def format_metrics_table(
         ("profit_factor", "Profit Factor", "{:.2f}"),
         ("n_days", "Trading Days", "{:.0f}"),
     ]
+    if has_benchmark:
+        display_keys += [
+            ("benchmark_cagr", "Benchmark CAGR", "{:.1%}"),
+            ("benchmark_sharpe", "Benchmark Sharpe", "{:.2f}"),
+            ("benchmark_max_drawdown", "Benchmark MaxDD", "{:.1%}"),
+            ("alpha", "Alpha vs Bench", "{:.1%}"),
+            ("tracking_error", "Tracking Error", "{:.1%}"),
+            ("information_ratio", "Info Ratio", "{:.2f}"),
+        ]
 
     col_width = max(16, max(len(n) for n in strategy_names) + 2)
     label_width = 18

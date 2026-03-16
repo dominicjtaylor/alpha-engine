@@ -21,15 +21,12 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# ---------------------------------------------------------------------------
-# Page config
-# ---------------------------------------------------------------------------
-st.set_page_config(
-    page_title="Paper Trading — Alpha Engine",
-    page_icon="📝",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+INDEX_DISPLAY_NAMES = {
+    "ftse100": "FTSE 100",
+    "ftse250": "FTSE 250",
+    "ftse_all": "FTSE All-Share",
+}
+
 
 logging.basicConfig(level=logging.WARNING)
 logging.getLogger("yfinance").setLevel(logging.ERROR)
@@ -74,7 +71,7 @@ st.markdown("""
     gap: 12px;
     box-shadow: 0 2px 8px rgba(255,107,0,0.35);
 ">
-    <span style="font-size:1.6rem">📝</span>
+    <i class="fa-solid fa-file-pen" style="font-size:1.4rem;opacity:0.9"></i>
     <span>PAPER TRADING MODE &nbsp;·&nbsp; SIMULATED PORTFOLIO &nbsp;·&nbsp; NO REAL MONEY INVOLVED</span>
     <span style="margin-left:auto; font-size:0.85rem; opacity:0.85">Prices from Yahoo Finance &nbsp;|&nbsp; All values in GBP (£)</span>
 </div>
@@ -107,7 +104,7 @@ def _paper_label(label: str) -> str:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(show_spinner="Fetching latest LSE prices…", ttl=1800)
-def fetch_latest_prices(universe: str, universe_size: int, lookback_days: int = 320):
+def fetch_latest_prices(universe: str, universe_size: int, lookback_days: int = 400):
     """
     Download the most recent ``lookback_days`` of price data.
     Returns (prices_df, returns_df, ohlcv_dict, latest_prices_series).
@@ -196,16 +193,16 @@ with st.sidebar:
         background:#FF6B00; color:white; font-weight:700;
         padding:8px 12px; border-radius:4px; text-align:center;
         letter-spacing:0.08em; margin-bottom:1rem;
-    ">📝 PAPER TRADING</div>
+    "><i class="fa-solid fa-file-pen" style="margin-right:6px"></i>PAPER TRADING</div>
     """, unsafe_allow_html=True)
 
-    st.subheader("Portfolio Setup")
+    st.markdown('<p style="font-size:0.95rem;font-weight:600;margin:0.6rem 0 0.2rem"><i class="fa-solid fa-briefcase ae-icon"></i>Portfolio Setup</p>', unsafe_allow_html=True)
     initial_capital = st.number_input(
         "Starting capital (£)", value=10_000, step=1_000, min_value=1_000, format="%d",
         help="Fake GBP. This is not real money."
     )
 
-    st.subheader("Strategy")
+    st.markdown('<p style="font-size:0.95rem;font-weight:600;margin:0.6rem 0 0.2rem"><i class="fa-solid fa-layer-group ae-icon"></i>Strategy</p>', unsafe_allow_html=True)
     strategy = st.selectbox(
         "Signal source",
         ["momentum", "mean_reversion", "earnings"],
@@ -218,12 +215,11 @@ with st.sidebar:
     universe = st.selectbox(
         "Universe",
         ["ftse100", "ftse250", "ftse_all"],
-        format_func=lambda x: {"ftse100": "FTSE 100", "ftse250": "FTSE 250",
-                                "ftse_all": "FTSE All (~350)"}[x],
+        format_func=lambda x: INDEX_DISPLAY_NAMES.get(x, x),
     )
     universe_size = st.slider("Max tickers", 30, 200, 100, step=10)
 
-    st.subheader("Signal Parameters")
+    st.markdown('<p style="font-size:0.95rem;font-weight:600;margin:0.6rem 0 0.2rem"><i class="fa-solid fa-sliders ae-icon"></i>Signal Parameters</p>', unsafe_allow_html=True)
     with st.expander("Momentum", expanded=strategy == "momentum"):
         mom_lookback = st.slider("Lookback (days)", 63, 504, 252, step=21, key="pm_lb")
         mom_skip = st.slider("Skip (days)", 0, 63, 21, step=5, key="pm_skip")
@@ -240,7 +236,7 @@ with st.sidebar:
                                    format="%.0f%%", key="ep_gap")
         hold_days = st.slider("Hold days", 3, 30, 10, step=1, key="ep_hold")
 
-    st.subheader("Costs")
+    st.markdown('<p style="font-size:0.95rem;font-weight:600;margin:0.6rem 0 0.2rem"><i class="fa-solid fa-coins ae-icon"></i>Costs</p>', unsafe_allow_html=True)
     commission_bps = st.slider("Commission (bps)", 0, 30, 10, key="p_comm")
     slippage_bps = st.slider("Slippage (bps)", 0, 30, 10, key="p_slip")
     stamp_duty_pct = st.slider("Stamp duty (%)", 0.0, 1.0, 0.5, step=0.1,
@@ -249,14 +245,14 @@ with st.sidebar:
     st.divider()
 
     # Action buttons
-    btn_refresh = st.button("🔄  Refresh Prices & Signals",
-                             use_container_width=True,
+    btn_refresh = st.button("Refresh Prices & Signals",
+                             width="stretch",
                              help="Download latest prices and recompute signals")
-    btn_rebalance = st.button("⚡  Execute Paper Rebalance",
-                               use_container_width=True, type="primary",
+    btn_rebalance = st.button("Execute Rebalance",
+                               width="stretch", type="primary",
                                help="Apply today's signals to your paper portfolio")
-    btn_reset = st.button("🗑️  Reset Portfolio",
-                           use_container_width=True,
+    btn_reset = st.button("Reset Portfolio",
+                           width="stretch",
                            help="Delete paper portfolio and start fresh")
 
     st.caption("All simulated. No real orders are placed.")
@@ -281,26 +277,33 @@ if btn_reset:
 # ---------------------------------------------------------------------------
 
 if not portfolio.is_active:
-    st.title("📝 Paper Trading")
-    st.subheader("Start your paper portfolio")
+    st.markdown('<h1 class="ae-title"><i class="fa-solid fa-file-pen ae-icon"></i>Paper Trading</h1>', unsafe_allow_html=True)
+    st.markdown('<h3 class="ae-sub"><i class="fa-solid fa-play ae-icon"></i>Start your paper portfolio</h3>', unsafe_allow_html=True)
 
     st.markdown("""
     Paper trading lets you test a strategy with **simulated money** before committing
-    real capital. This mode:
+    real capital. This is step 3 of the research workflow:
 
+    ```
+    1. Factor Research  → test if the signal predicts returns
+    2. Backtest         → test if it makes money after costs
+    3. Paper Trading    → run it live with simulated money  ← you are here
+    ```
+
+    This mode:
     - Uses **live prices** from Yahoo Finance (LSE tickers)
-    - Applies the **same signal logic** as the backtester
+    - Applies the **same factor logic** as the backtester
     - Tracks your simulated equity, positions, and trade history
-    - Models **UK transaction costs** including stamp duty
+    - Models **UK transaction costs** including 0.5% stamp duty
     - **Never places real orders**
     """)
 
     col1, col2, col3 = st.columns(3)
     col1.info(f"**Starting capital:** {_fmt_gbp0(initial_capital)}")
     col2.info(f"**Strategy:** {strategy.replace('_', ' ').title()}")
-    col3.info(f"**Universe:** {universe.upper()}")
+    col3.info(f"**Universe:** {INDEX_DISPLAY_NAMES.get(universe, universe.upper())}")
 
-    if st.button("▶  Start Paper Portfolio", type="primary", use_container_width=False):
+    if st.button("Start Paper Portfolio", type="primary", width="content"):
         portfolio.create(
             initial_capital=float(initial_capital),
             strategy=strategy,
@@ -348,7 +351,7 @@ signal_date = st.session_state.get("paper_signal_date", "—")
 # Execute rebalance
 if btn_rebalance and len(signals) > 0 and len(latest_prices) > 0:
     executed_trades = portfolio.execute_rebalance(signals, latest_prices)
-    st.success(f"✅ Paper rebalance executed — {len(executed_trades)} trades")
+    st.success(f"Paper rebalance executed — {len(executed_trades)} trades")
     st.rerun()
 
 # Get current portfolio state
@@ -362,13 +365,62 @@ total_pnl_pct = total_pnl / initial_cap if initial_cap > 0 else 0.0
 # Dashboard header — always visible
 # ---------------------------------------------------------------------------
 
-st.title("📝 Paper Portfolio")
+st.markdown('<h1 class="ae-title"><i class="fa-solid fa-briefcase ae-icon"></i>Paper Portfolio</h1>', unsafe_allow_html=True)
 st.caption(
     f"Strategy: **{portfolio.config.get('strategy', '—').replace('_',' ').title()}** &nbsp;|&nbsp; "
-    f"Universe: **{portfolio.config.get('universe', '—').upper()}** &nbsp;|&nbsp; "
+    f"Universe: **{INDEX_DISPLAY_NAMES.get(portfolio.config.get('universe', ''), portfolio.config.get('universe', '—').upper())}** &nbsp;|&nbsp; "
     f"Started: **{portfolio.config.get('created_date', portfolio._state.get('created_date','—'))}** &nbsp;|&nbsp; "
     f"Signal date: **{str(signal_date)[:10] if signal_date != '—' else '—'}**"
 )
+
+with st.expander("What this page does — click to read", expanded=False):
+    st.markdown("""
+    ### Live signal generation with simulated money
+
+    Paper trading is the bridge between backtesting and real trading.
+    It runs the **same factor logic** but against today's actual prices,
+    so you can see what the strategy would do right now — without risking money.
+
+    ```
+    Download today's LSE prices
+    ↓
+    Compute factor scores for all stocks
+    ↓
+    Rank stocks → build long/short portfolio weights
+    ↓
+    Compare to current holdings → generate trade list
+    ↓
+    Execute simulated trades (deduct costs)
+    ↓
+    Track equity and positions over time
+    ```
+
+    ---
+
+    ### How to use this page
+
+    | Button | What it does |
+    |---|---|
+    | **Refresh Prices & Signals** | Download latest prices and recompute today's factor scores |
+    | **Execute Rebalance** | Apply today's signals — buy/sell positions at current prices |
+    | **Reset Portfolio** | Start fresh with new capital |
+
+    **Typical daily workflow:**
+    1. Click **Refresh Prices & Signals** to get the latest prices
+    2. Review the **Pending Trades** section — check what the strategy wants to do today
+    3. Click **Execute Rebalance** to apply the trades
+    4. Monitor P&L and positions over time
+
+    ---
+
+    ### Important: everything here is simulated
+
+    - No real orders are ever placed
+    - Prices are from Yahoo Finance (15-min delayed for LSE)
+    - Transaction costs are modelled but not actually paid
+    - Use this to build conviction before trading with real capital
+    """)
+
 
 # KPI row
 k1, k2, k3, k4, k5 = st.columns(5)
@@ -401,17 +453,17 @@ k5.metric(
 # ---------------------------------------------------------------------------
 
 tab_pos, tab_signals, tab_history, tab_trades = st.tabs([
-    "💼 Positions", "🎯 Today's Signals", "📈 Equity History", "📋 Trade Log"
+    "Positions", "Today's Signals", "Equity History", "Trade Log"
 ])
 
 # ── Tab 1: Current Positions ────────────────────────────────────────────────
 with tab_pos:
-    st.subheader("Open Positions  *(paper)*")
+    st.markdown('<h3 class="ae-sub"><i class="fa-solid fa-briefcase ae-icon"></i>Open Positions <em style="font-size:0.75em;opacity:0.7">(paper)</em></h3>', unsafe_allow_html=True)
 
     if not positions_snap:
         st.info(
             "No open positions yet.  \n"
-            "Click **⚡ Execute Paper Rebalance** in the sidebar to enter today's signals."
+            "Click **Execute Rebalance** in the sidebar to enter today's signals."
         )
     else:
         pos_rows = []
@@ -429,10 +481,10 @@ with tab_pos:
             })
 
         pos_df = pd.DataFrame(pos_rows)
-        st.dataframe(pos_df, use_container_width=True, hide_index=True)
+        st.dataframe(pos_df, width="stretch", hide_index=True)
 
         # Allocation chart
-        st.subheader("Portfolio Allocation")
+        st.markdown('<h3 class="ae-sub"><i class="fa-solid fa-chart-pie ae-icon"></i>Portfolio Allocation</h3>', unsafe_allow_html=True)
         import matplotlib.pyplot as plt
         import matplotlib.patches as mpatches
 
@@ -468,7 +520,7 @@ with tab_pos:
                     fontsize=20, color="orange", alpha=0.2,
                     ha="right", va="bottom", fontweight="bold")
 
-        fig.suptitle("📝 PAPER PORTFOLIO — Simulated Positions", fontsize=11,
+        fig.suptitle("PAPER PORTFOLIO — Simulated Positions", fontsize=11,
                      color="#e65c00", fontweight="bold")
         fig.tight_layout()
         st.pyplot(fig)
@@ -482,15 +534,15 @@ with tab_pos:
 
 # ── Tab 2: Today's Signals ──────────────────────────────────────────────────
 with tab_signals:
-    st.subheader(f"Today's Target Weights — {portfolio.config.get('strategy','').replace('_',' ').title()}")
+    st.markdown('<h3 class="ae-sub"><i class="fa-solid fa-crosshairs ae-icon"></i>Today\'s Target Weights — ' + portfolio.config.get("strategy","").replace("_"," ").title() + '</h3>', unsafe_allow_html=True)
     st.caption(
         f"Generated from prices as of **{str(signal_date)[:10]}**. "
         "These are the weights the strategy *wants* today. "
-        "Click **⚡ Execute Paper Rebalance** to apply them."
+        "Click **Execute Rebalance** to apply them."
     )
 
     if len(signals) == 0:
-        st.info("Click **🔄 Refresh Prices & Signals** in the sidebar to load today's signals.")
+        st.info("Click **Refresh Prices & Signals** in the sidebar to load today's signals.")
     else:
         # Split long / short
         longs = signals[signals > 0].sort_values(ascending=False)
@@ -498,31 +550,31 @@ with tab_signals:
 
         col_l, col_s = st.columns(2)
         with col_l:
-            st.markdown("**🟢 Long positions**")
+            st.markdown('<p style="font-weight:600;color:#22c55e"><i class="fa-solid fa-arrow-up ae-icon"></i>Long positions</p>', unsafe_allow_html=True)
             if len(longs):
                 long_df = longs.reset_index()
                 long_df.columns = ["Ticker", "Target Weight"]
                 long_df["Target Weight"] = long_df["Target Weight"].map(
                     lambda x: f"{x:.2%}"
                 )
-                st.dataframe(long_df, use_container_width=True, hide_index=True)
+                st.dataframe(long_df, width="stretch", hide_index=True)
             else:
                 st.caption("No long signals today.")
 
         with col_s:
-            st.markdown("**🔴 Short positions**")
+            st.markdown('<p style="font-weight:600;color:#ef4444"><i class="fa-solid fa-arrow-down ae-icon"></i>Short positions</p>', unsafe_allow_html=True)
             if len(shorts):
                 short_df = shorts.abs().reset_index()
                 short_df.columns = ["Ticker", "Target Weight"]
                 short_df["Target Weight"] = short_df["Target Weight"].map(
                     lambda x: f"{x:.2%}"
                 )
-                st.dataframe(short_df, use_container_width=True, hide_index=True)
+                st.dataframe(short_df, width="stretch", hide_index=True)
             else:
                 st.caption("No short signals today.")
 
         st.divider()
-        st.subheader("Pending Trades (preview)")
+        st.markdown('<h3 class="ae-sub"><i class="fa-solid fa-list-check ae-icon"></i>Pending Trades (preview)</h3>', unsafe_allow_html=True)
         st.caption("Trades required to move from current positions to today's target weights.")
 
         if len(latest_prices) > 0:
@@ -548,7 +600,7 @@ with tab_signals:
 
                 st.dataframe(
                     pend_df.style.applymap(colour_action, subset=["Action"]),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
                 total_cost = sum(t["estimated_cost"] for t in pending)
@@ -566,7 +618,7 @@ with tab_signals:
 
 # ── Tab 3: Equity History ────────────────────────────────────────────────────
 with tab_history:
-    st.subheader("Portfolio Equity History  *(paper)*")
+    st.markdown('<h3 class="ae-sub"><i class="fa-solid fa-chart-line ae-icon"></i>Portfolio Equity History <em style="font-size:0.75em;opacity:0.7">(paper)</em></h3>', unsafe_allow_html=True)
 
     equity_series = portfolio.equity_history
 
@@ -593,7 +645,7 @@ with tab_history:
 
         ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"£{x:,.0f}"))
         ax.set_ylabel("Portfolio Value (£)")
-        ax.set_title("📝 PAPER Portfolio Equity — Simulated (GBP)", fontsize=11,
+        ax.set_title("PAPER Portfolio Equity — Simulated (GBP)", fontsize=11,
                      color="#e65c00", fontweight="bold")
         ax.legend(fontsize=8)
         ax.tick_params(axis="x", rotation=20)
@@ -621,7 +673,7 @@ with tab_history:
 
 # ── Tab 4: Trade Log ─────────────────────────────────────────────────────────
 with tab_trades:
-    st.subheader("Trade Log  *(paper)*")
+    st.markdown('<h3 class="ae-sub"><i class="fa-solid fa-terminal ae-icon"></i>Trade Log <em style="font-size:0.75em;opacity:0.7">(paper)</em></h3>', unsafe_allow_html=True)
     st.caption("All trades are simulated. No real orders are placed.")
 
     trades = portfolio.trade_log
@@ -652,7 +704,7 @@ with tab_trades:
 
         st.dataframe(
             trade_df.style.applymap(colour_action, subset=["Action"]),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -691,7 +743,7 @@ st.markdown("""
     font-size: 0.85rem;
     text-align: center;
 ">
-    ⚠️ &nbsp; <strong>PAPER TRADING MODE</strong> &nbsp;·&nbsp;
+    <i class="fa-solid fa-triangle-exclamation" style="margin-right:6px"></i> <strong>PAPER TRADING MODE</strong> &nbsp;·&nbsp;
     All positions, trades, and P&amp;L figures are <strong>entirely simulated</strong>.
     No real money is involved and no real orders are placed. &nbsp;·&nbsp;
     Past simulated performance is not indicative of future real results.
